@@ -8,8 +8,7 @@ $JavaExecutable = $config.JavaExecutable
 $JarFilePattern = $config.JarFilePattern
 $JavaAdditionalArgs = $config.JavaAdditionalArgs
 
-$script:paperApiCache = @{ }
-$script:versionData = $null
+$script:paperApiCache = @{}
 
 function Write-Log {
   param(
@@ -56,45 +55,58 @@ function Initialize-ServerDirectories {
 
 function Get-VersionDataFromApi {
   param([string]$Version)
-  if (-not $script:paperApiCache.ContainsKey($Version)) {
+  $cacheKey = "versionData-$Version"
+  
+  if (-not $script:paperApiCache.ContainsKey($cacheKey)) {
     try {
       $response = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$Version" -ErrorAction Stop
       if ($response) {
-        $script:paperApiCache[$Version] = $response
+        $script:paperApiCache[$cacheKey] = $response
       }
       else {
         Write-Log "No data received from API for version '$Version'" -Level "ERROR"
-        $global:LASTEXITCODE = 1
         return $null
       }
     }
     catch {
       Write-Log "Failed to fetch API data for version '$Version': $_" -Level "ERROR"
-      $global:LASTEXITCODE = 1
       return $null
     }
   }
-  return $script:paperApiCache[$Version]
+  return $script:paperApiCache[$cacheKey]
+}
+
+function Get-FileChecksum {
+  param([string]$filePath)
+  
+  $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($filePath)
+  $checksum = $hashAlgorithm.ComputeHash($stream)
+  $stream.Close()
+
+  return [BitConverter]::ToString($checksum) -replace '-'
 }
 
 function Download-PaperJar {
+  param([string]$Version)
   try {
-    if (-not $script:versionData) {
-      Write-Log "Fetching version data..."
-      $script:versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
-    }
+    Write-Log "Fetching version data..."
+    $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
     $versionToDownload = if ($config.MinecraftVersion -eq 'latest') {
-      $script:versionData.versions[-1]
+      $versionData.versions[-1]
     } else {
       $config.MinecraftVersion
     }
+    
     $buildData = Get-VersionDataFromApi -Version $versionToDownload
     if (-not $buildData) { return $null }
+
     $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
     $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
     $jarFileName = $downloadData.downloads.application.name
     $downloadUrl = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
-    $jarFilePath = "./$jarFileName"
+    
+    $jarFilePath = Join-Path -Path $PSScriptRoot -ChildPath $jarFileName
 
     if (Test-Path $jarFilePath) {
       Write-Log "Paper JAR file already exists: $jarFileName"
@@ -107,8 +119,8 @@ function Download-PaperJar {
 
     $expectedChecksum = $downloadData.downloads.application.sha256
     if ($expectedChecksum) {
-      $actualChecksum = Get-FileHash -Path $jarFilePath -Algorithm SHA256
-      if ($actualChecksum.Hash -eq $expectedChecksum) {
+      $actualChecksum = Get-FileChecksum -filePath $jarFilePath
+      if ($actualChecksum -eq $expectedChecksum) {
         Write-Log "Checksum validated successfully."
       }
       else {
@@ -130,7 +142,7 @@ function Download-PaperJar {
 
 function Find-ExistingPaperJar {
   try {
-    $jarFiles = Get-ChildItem -Path "./" -Filter $JarFilePattern -File
+    $jarFiles = Get-ChildItem -Path $PSScriptRoot -Filter $JarFilePattern -File
     if ($jarFiles) {
       $latestJar = $jarFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
       Write-Log "Found existing Paper JAR file: $($latestJar.Name)"
@@ -153,7 +165,6 @@ function Validate-JavaExecutable {
     $global:LASTEXITCODE = 1
     return $false
   }
-  $script:JavaExecutable = $javaCmd.Source
   return $true
 }
 
@@ -168,7 +179,7 @@ function Start-MinecraftServerWithJar {
       $javaArgs += $JavaAdditionalArgs -split ' '
     }
     Write-Log "Executing: $JavaExecutable $($javaArgs -join ' ')"
-    $process = Start-Process -FilePath $JavaExecutable -ArgumentList $javaArgs -WorkingDirectory "./" -PassThru
+    $process = Start-Process -FilePath $JavaExecutable -ArgumentList $javaArgs -WorkingDirectory $PSScriptRoot -PassThru
     $process.WaitForExit()
   }
   catch {
@@ -182,7 +193,7 @@ function Run-MinecraftServer {
     Initialize-ServerDirectories
     $paperJar = Find-ExistingPaperJar
     if (-not $paperJar) {
-      $paperJar = Download-PaperJar
+      $paperJar = Download-PaperJar -Version $config.MinecraftVersion
     }
     if (-not $paperJar) {
       Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"

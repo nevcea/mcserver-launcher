@@ -44,10 +44,10 @@ function Ensure-DirectoryExists {
 function Initialize-ServerDirectories {
   try {
     Ensure-DirectoryExists -Path "./plugins"
-    "eula=true" | Out-File -Encoding UTF8 -FilePath "./eula.txt" -Force
+    Set-Content -Path "./eula.txt" -Value "eula=true" -Encoding ASCII
     Write-Log "Server directories initialized."
   }
-  catch {
+  catch { 
     Write-Log "Error initializing server directories: $_" -Level "ERROR"
     $global:LASTEXITCODE = 1
     return

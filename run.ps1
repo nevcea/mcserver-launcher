@@ -78,13 +78,17 @@ function Get-VersionDataFromApi {
 
 function Get-FileChecksum {
   param([string]$filePath)
-  
-  $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
-  $stream = [System.IO.File]::OpenRead($filePath)
-  $checksum = $hashAlgorithm.ComputeHash($stream)
-  $stream.Close()
 
-  return [BitConverter]::ToString($checksum) -replace '-'
+  try {
+    $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+    $checksum = $hashAlgorithm.ComputeHash([System.IO.File]::OpenRead($filePath))
+    return [BitConverter]::ToString($checksum) -replace '-'
+  }
+  catch {
+    Write-Log "Failed to calculate checksum for file '$filePath': $_" -Level "ERROR"
+    $global:LASTEXITCODE = 1
+    return $null
+  }
 }
 
 function Download-PaperJar {

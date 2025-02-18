@@ -43,7 +43,6 @@ function Ensure-DirectoryExists {
 
 function Initialize-ServerDirectories {
   try {
-    # Create the plugins directory and eula.txt file in the current directory
     Ensure-DirectoryExists -Path "./plugins"
     "eula=true" | Out-File -Encoding UTF8 -FilePath "./eula.txt" -Force
     Write-Log "Server directories initialized."

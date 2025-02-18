@@ -29,29 +29,45 @@ function Write-Log {
 function Ensure-DirectoryExists {
   param([string]$Path)
   if (-not (Test-Path $Path)) {
-    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    try {
+      New-Item -ItemType Directory -Path $Path -Force | Out-Null
+      Write-Log "Directory created: $Path"
+    }
+    catch {
+      Write-Log "Error creating directory ${Path}: $_" -Level "ERROR"
+      $global:LASTEXITCODE = 1
+      return
+    }
   }
 }
 
-function Initialize-ServerDirectory {
+function Initialize-ServerFolder {
   try {
     Ensure-DirectoryExists -Path $config.ServerDirectory
     Ensure-DirectoryExists -Path (Join-Path $config.ServerDirectory "plugins")
     "eula=true" | Out-File -Encoding UTF8 -FilePath (Join-Path $config.ServerDirectory "eula.txt") -Force
-    Write-Log "Server directory initialized."
+    Write-Log "Server folder initialized."
   }
   catch {
-    Write-Log "Error initializing server directory: $_" -Level "ERROR"
+    Write-Log "Error initializing server folder: $_" -Level "ERROR"
     $global:LASTEXITCODE = 1
     return
   }
 }
 
-function Get-PaperApiData {
+function Get-PaperVersionData {
   param([string]$Version)
   if (-not $script:paperApiCache.ContainsKey($Version)) {
     try {
-      $script:paperApiCache[$Version] = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$Version" -ErrorAction Stop
+      $response = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$Version" -ErrorAction Stop
+      if ($response) {
+        $script:paperApiCache[$Version] = $response
+      }
+      else {
+        Write-Log "No data received from API for version '$Version'" -Level "ERROR"
+        $global:LASTEXITCODE = 1
+        return $null
+      }
     }
     catch {
       Write-Log "Failed to fetch API data for version '$Version': $_" -Level "ERROR"
@@ -62,7 +78,7 @@ function Get-PaperApiData {
   return $script:paperApiCache[$Version]
 }
 
-function Download-PaperJar {
+function Download-PaperJarFile {
   try {
     if (-not $script:versionData) {
       Write-Log "Fetching version data..."
@@ -73,20 +89,37 @@ function Download-PaperJar {
     } else {
       $config.MinecraftVersion
     }
-    $buildData = Get-PaperApiData -Version $versionToDownload
+    $buildData = Get-PaperVersionData -Version $versionToDownload
     if (-not $buildData) { return $null }
     $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
     $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
     $jarFileName = $downloadData.downloads.application.name
     $downloadUrl = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
     $jarFilePath = Join-Path $config.ServerDirectory $jarFileName
+
     if (Test-Path $jarFilePath) {
       Write-Log "Paper JAR file already exists: $jarFileName"
       return $jarFileName
     }
+
     Write-Log "Downloading Paper JAR file from: $downloadUrl"
     Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
     Write-Log "Paper JAR file download complete: $jarFileName"
+
+    $expectedChecksum = $downloadData.downloads.application.sha256
+    if ($expectedChecksum) {
+      $actualChecksum = Get-FileHash -Path $jarFilePath -Algorithm SHA256
+      if ($actualChecksum.Hash -eq $expectedChecksum) {
+        Write-Log "Checksum validated successfully."
+      }
+      else {
+        Write-Log "Checksum validation failed." -Level "ERROR"
+        Remove-Item $jarFilePath -Force
+        $global:LASTEXITCODE = 1
+        return $null
+      }
+    }
+
     return $jarFileName
   }
   catch {
@@ -96,7 +129,7 @@ function Download-PaperJar {
   }
 }
 
-function Find-ExistingPaperJar {
+function Find-ExistingPaperJarFile {
   try {
     $jarFiles = Get-ChildItem -Path $config.ServerDirectory -Filter $JarFilePattern -File
     if ($jarFiles) {
@@ -114,9 +147,22 @@ function Find-ExistingPaperJar {
   }
 }
 
+function Validate-JavaExecutablePath {
+  $javaCmd = Get-Command $JavaExecutable -ErrorAction SilentlyContinue
+  if (-not $javaCmd) {
+    Write-Log "Java executable not found: $JavaExecutable" -Level "ERROR"
+    $global:LASTEXITCODE = 1
+    return $false
+  }
+  $script:JavaExecutable = $javaCmd.Source
+  return $true
+}
+
 function Start-MinecraftServer {
   param([string]$JarFile)
   try {
+    if (-not (Validate-JavaExecutablePath)) { return }
+
     Write-Log "Starting Minecraft server with Paper JAR file: $JarFile"
     $javaArgs = @("-Xms$($config.MinRamGB)G", "-Xmx$($config.MaxRamGB)G", "-jar", $JarFile)
     if ($JavaAdditionalArgs) {
@@ -132,12 +178,12 @@ function Start-MinecraftServer {
   }
 }
 
-function Run-Server {
+function Run-MinecraftServer {
   try {
-    Initialize-ServerDirectory
-    $paperJar = Find-ExistingPaperJar
+    Initialize-ServerFolder
+    $paperJar = Find-ExistingPaperJarFile
     if (-not $paperJar) {
-      $paperJar = Download-PaperJar
+      $paperJar = Download-PaperJarFile
     }
     if (-not $paperJar) {
       Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
@@ -152,4 +198,4 @@ function Run-Server {
   }
 }
 
-Run-Server
+Run-MinecraftServer

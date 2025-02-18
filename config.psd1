@@ -1,22 +1,19 @@
 @{
-  # The Java executable to use for running the Minecraft server. (Typically, this doesn't need to be changed)
+  # The path to the Java executable used to run the Minecraft server. (Usually, the default "java" is sufficient)
   JavaExecutable = "java"
   
-  # The pattern used to identify the Minecraft server .jar file (e.g., paper-1.18.jar). (Usually doesn't need modification)
+  # The pattern used to match the Minecraft server .jar file (e.g., paper-1.18.jar). (Typically, this does not need to be modified)
   JarFilePattern = "paper-*.jar"
   
-  # Additional arguments passed to Java when launching the server, such as 'nogui' for no graphical interface. (This is usually fine as is)
+  # Additional arguments passed to the Java process when launching the Minecraft server (e.g., 'nogui' to disable the graphical interface).
   JavaAdditionalArgs = "nogui"
   
-  # Minimum RAM allocation for the Minecraft server (in GB). (This value can be adjusted based on your server's needs)
+  # Minimum amount of RAM (in GB) allocated to the Minecraft server. (Adjust based on the server's needs)
   MinRamGB = 2
   
-  # Maximum RAM allocation for the Minecraft server (in GB). (Adjustable based on available system resources)
+  # Maximum amount of RAM (in GB) allocated to the Minecraft server. (Adjust based on available system resources)
   MaxRamGB = 4
   
-  # The version of Minecraft to run. "latest" will use the most recent version. (This is fine unless you want a specific version)
+  # The Minecraft version to run. Use "latest" for the most up-to-date version or specify a particular version number.
   MinecraftVersion = "latest"
-  
-  # The directory where the Minecraft server files are located. (Typically, this should be set to the correct server folder)
-  ServerDirectory = "./server"
 }

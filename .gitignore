@@ -1,1 +1,5 @@
-server/*
+*
+
+!LICENSE.md
+!server.ps1
+!config.psd1

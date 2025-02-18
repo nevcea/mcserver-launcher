@@ -41,21 +41,21 @@ function Ensure-DirectoryExists {
   }
 }
 
-function Initialize-ServerFolder {
+function Initialize-ServerDirectories {
   try {
-    Ensure-DirectoryExists -Path $config.ServerDirectory
-    Ensure-DirectoryExists -Path (Join-Path $config.ServerDirectory "plugins")
-    "eula=true" | Out-File -Encoding UTF8 -FilePath (Join-Path $config.ServerDirectory "eula.txt") -Force
-    Write-Log "Server folder initialized."
+    # Create the plugins directory and eula.txt file in the current directory
+    Ensure-DirectoryExists -Path "./plugins"
+    "eula=true" | Out-File -Encoding UTF8 -FilePath "./eula.txt" -Force
+    Write-Log "Server directories initialized."
   }
   catch {
-    Write-Log "Error initializing server folder: $_" -Level "ERROR"
+    Write-Log "Error initializing server directories: $_" -Level "ERROR"
     $global:LASTEXITCODE = 1
     return
   }
 }
 
-function Get-PaperVersionData {
+function Get-VersionDataFromApi {
   param([string]$Version)
   if (-not $script:paperApiCache.ContainsKey($Version)) {
     try {
@@ -78,7 +78,7 @@ function Get-PaperVersionData {
   return $script:paperApiCache[$Version]
 }
 
-function Download-PaperJarFile {
+function Download-PaperJar {
   try {
     if (-not $script:versionData) {
       Write-Log "Fetching version data..."
@@ -89,13 +89,13 @@ function Download-PaperJarFile {
     } else {
       $config.MinecraftVersion
     }
-    $buildData = Get-PaperVersionData -Version $versionToDownload
+    $buildData = Get-VersionDataFromApi -Version $versionToDownload
     if (-not $buildData) { return $null }
     $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
     $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
     $jarFileName = $downloadData.downloads.application.name
     $downloadUrl = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
-    $jarFilePath = Join-Path $config.ServerDirectory $jarFileName
+    $jarFilePath = "./$jarFileName"
 
     if (Test-Path $jarFilePath) {
       Write-Log "Paper JAR file already exists: $jarFileName"
@@ -129,15 +129,15 @@ function Download-PaperJarFile {
   }
 }
 
-function Find-ExistingPaperJarFile {
+function Find-ExistingPaperJar {
   try {
-    $jarFiles = Get-ChildItem -Path $config.ServerDirectory -Filter $JarFilePattern -File
+    $jarFiles = Get-ChildItem -Path "./" -Filter $JarFilePattern -File
     if ($jarFiles) {
       $latestJar = $jarFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
       Write-Log "Found existing Paper JAR file: $($latestJar.Name)"
       return $latestJar.Name
     }
-    Write-Log "No Paper JAR file found in the server directory."
+    Write-Log "No Paper JAR file found in the current directory."
     return $null
   }
   catch {
@@ -147,7 +147,7 @@ function Find-ExistingPaperJarFile {
   }
 }
 
-function Validate-JavaExecutablePath {
+function Validate-JavaExecutable {
   $javaCmd = Get-Command $JavaExecutable -ErrorAction SilentlyContinue
   if (-not $javaCmd) {
     Write-Log "Java executable not found: $JavaExecutable" -Level "ERROR"
@@ -158,10 +158,10 @@ function Validate-JavaExecutablePath {
   return $true
 }
 
-function Start-MinecraftServer {
+function Start-MinecraftServerWithJar {
   param([string]$JarFile)
   try {
-    if (-not (Validate-JavaExecutablePath)) { return }
+    if (-not (Validate-JavaExecutable)) { return }
 
     Write-Log "Starting Minecraft server with Paper JAR file: $JarFile"
     $javaArgs = @("-Xms$($config.MinRamGB)G", "-Xmx$($config.MaxRamGB)G", "-jar", $JarFile)
@@ -169,7 +169,7 @@ function Start-MinecraftServer {
       $javaArgs += $JavaAdditionalArgs -split ' '
     }
     Write-Log "Executing: $JavaExecutable $($javaArgs -join ' ')"
-    $process = Start-Process -FilePath $JavaExecutable -ArgumentList $javaArgs -WorkingDirectory $config.ServerDirectory -PassThru
+    $process = Start-Process -FilePath $JavaExecutable -ArgumentList $javaArgs -WorkingDirectory "./" -PassThru
     $process.WaitForExit()
   }
   catch {
@@ -180,17 +180,17 @@ function Start-MinecraftServer {
 
 function Run-MinecraftServer {
   try {
-    Initialize-ServerFolder
-    $paperJar = Find-ExistingPaperJarFile
+    Initialize-ServerDirectories
+    $paperJar = Find-ExistingPaperJar
     if (-not $paperJar) {
-      $paperJar = Download-PaperJarFile
+      $paperJar = Download-PaperJar
     }
     if (-not $paperJar) {
       Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
       return
     }
     Clear-Host
-    Start-MinecraftServer -JarFile $paperJar
+    Start-MinecraftServerWithJar -JarFile $paperJar
   }
   catch {
     Write-Log "Unexpected error occurred: $_" -Level "ERROR"

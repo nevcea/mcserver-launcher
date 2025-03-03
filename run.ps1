@@ -154,9 +154,22 @@ function Find-ExistingPaperJar {
   try {
     $jarFiles = Get-ChildItem -Path $PSScriptRoot -Filter $JarFilePattern -File
     if ($jarFiles) {
-      $latestJar = $jarFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-      Write-Log "Found existing Paper JAR file: $($latestJar.Name)"
-      return $latestJar.Name
+      $paperJars = $jarFiles | ForEach-Object {
+        if ($_ -match "paper-(\d+\.\d+\.\d+)-(\d+)\.jar$") {
+          [PSCustomObject]@{
+            FileName = $_.Name
+            Version  = [System.Version]$matches[1]
+            Build    = [int]$matches[2]
+          }
+        }
+      }
+
+      $latestJar = $paperJars | Sort-Object Version, Build -Descending | Select-Object -First 1
+      
+      if ($latestJar) {
+        Write-Log "Found latest Paper JAR file: $($latestJar.FileName)"
+        return $latestJar.FileName
+      }
     }
     Write-Log "No Paper JAR file found in the current directory."
     return $null

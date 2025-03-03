@@ -1,7 +1,13 @@
 $OutputEncoding = New-Object -TypeName System.Text.UTF8Encoding
 $VerbosePreference = "SilentlyContinue"
 
-$config = Import-PowerShellDataFile -Path "./config.psd1"
+try {
+  $config = Import-PowerShellDataFile -Path "./config.psd1"  
+}
+catch {
+  Write-Log "Failed to load configuration file: $_" -Level "ERROR"
+  exit 1
+}
 
 $ApiBaseUrl = "https://api.papermc.io/v2/projects/paper"
 $JavaExecutable = $config.JavaExecutable
@@ -170,6 +176,23 @@ function Validate-JavaExecutable {
     return $false
   }
   return $true
+
+  try {
+    $javaVersion = & $JavaExecutable -version 2>&1 | Select-String -Pattern "(\d+\. \d+)"
+    if ($javaVersion -match "(\d+\. \d+)") {
+      $javaMajorVersion = [decimal]$matches[1]
+      if ($javaMajorVersion -lt 17) {
+        Write-Log "Java 17 or higher is required. Found: Java $javaMajorVersion" -Level "ERROR"
+        return $false
+      }
+    }
+  }
+  catch {
+    Write-Log "Failed to determine Java version: $_" -Level "ERROR"
+    return $false
+  }
+
+  return $true
 }
 
 function Start-MinecraftServerWithJar {
@@ -195,6 +218,10 @@ function Start-MinecraftServerWithJar {
 function Run-MinecraftServer {
   try {
     Initialize-ServerDirectories
+    if (-not (Validate-JavaExecutable)) {
+      Write-Log "Java validation failed. Exiting." -Level "ERROR"
+      return
+    }
     $paperJar = Find-ExistingPaperJar
     if (-not $paperJar) {
       $paperJar = Download-PaperJar -Version $config.MinecraftVersion
@@ -203,6 +230,7 @@ function Run-MinecraftServer {
       Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
       return
     }
+    Validate-JavaExecutable
     Clear-Host
     Start-MinecraftServerWithJar -JarFile $paperJar
   }

@@ -91,6 +91,7 @@ function Get-FileChecksum {
 
     try {
         $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
+        $fileStream = [System.IO.File]::OpenRead($filePath)
         try {
             $checksum = $hashAlgorithm.ComputeHash([System.IO.File]::OpenRead($filePath))
         } finally {

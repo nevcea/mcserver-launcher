@@ -20,11 +20,10 @@ function Write-Log {
   param(
     [Parameter(Mandatory)]
     [string]$Message,
-    [ValidateSet("INFO", "WARNING", "ERROR")]
-    [string]$Level = "INFO"
+    [ValidateSet("WARNING", "ERROR")]
+    [string]$Level = "ERROR"
   )
   $logMethods = @{
-    INFO    = { Write-Host "[INFO]    $Message" -ForegroundColor Green }
     WARNING = { Write-Host "[WARNING] $Message" -ForegroundColor Yellow }
     ERROR   = { Write-Host "[ERROR]   $Message" -ForegroundColor Red }
   }
@@ -36,7 +35,6 @@ function Ensure-DirectoryExists {
   if (-not (Test-Path $Path)) {
     try {
       New-Item -ItemType Directory -Path $Path -Force | Out-Null
-      Write-Log "Directory created: $Path"
     }
     catch {
       Write-Log "Error creating directory ${Path}: $_" -Level "ERROR"
@@ -50,7 +48,6 @@ function Initialize-ServerDirectories {
   try {
     Ensure-DirectoryExists -Path "./plugins"
     Set-Content -Path "./eula.txt" -Value "eula=true" -Encoding ASCII
-    Write-Log "Server directories initialized."
   }
   catch { 
     Write-Log "Error initializing server directories: $_" -Level "ERROR"
@@ -100,7 +97,6 @@ function Get-FileChecksum {
 function Download-PaperJar {
   param([string]$Version)
   try {
-    Write-Log "Fetching version data..."
     $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
     $versionToDownload = if ($config.MinecraftVersion -eq 'latest') {
       $versionData.versions[-1]
@@ -119,21 +115,15 @@ function Download-PaperJar {
     $jarFilePath = Join-Path -Path $PSScriptRoot -ChildPath $jarFileName
 
     if (Test-Path $jarFilePath) {
-      Write-Log "Paper JAR file already exists: $jarFileName"
       return $jarFileName
     }
 
-    Write-Log "Downloading Paper JAR file from: $downloadUrl"
     Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
-    Write-Log "Paper JAR file download complete: $jarFileName"
 
     $expectedChecksum = $downloadData.downloads.application.sha256
     if ($expectedChecksum) {
       $actualChecksum = Get-FileChecksum -filePath $jarFilePath
-      if ($actualChecksum -eq $expectedChecksum) {
-        Write-Log "Checksum validated successfully."
-      }
-      else {
+      if ($actualChecksum -ne $expectedChecksum) {
         Write-Log "Checksum validation failed." -Level "ERROR"
         Remove-Item $jarFilePath -Force
         $global:LASTEXITCODE = 1
@@ -167,11 +157,9 @@ function Find-ExistingPaperJar {
       $latestJar = $paperJars | Sort-Object Version, Build -Descending | Select-Object -First 1
       
       if ($latestJar) {
-        Write-Log "Found latest Paper JAR file: $($latestJar.FileName)"
         return $latestJar.FileName
       }
     }
-    Write-Log "No Paper JAR file found in the current directory."
     return $null
   }
   catch {
@@ -188,39 +176,37 @@ function Validate-JavaExecutable {
     $global:LASTEXITCODE = 1
     return $false
   }
-  return $true
 
   try {
-    $javaVersion = & $JavaExecutable -version 2>&1 | Select-String -Pattern "(\d+\. \d+)"
-    if ($javaVersion -match "(\d+\. \d+)") {
-      $javaMajorVersion = [decimal]$matches[1]
-      if ($javaMajorVersion -lt 17) {
-        Write-Log "Java 17 or higher is required. Found: Java $javaMajorVersion" -Level "ERROR"
+    $javaVersionOutput = & $JavaExecutable -version 2>&1
+    if ($javaVersionOutput -match 'version "(\d+)(?:\.(\d+))?') {
+      $majorVersion = [int]$matches[1]
+      if ($majorVersion -lt 17) {
+        Write-Log "Java 17 or higher is required. Detected version: $majorVersion" -Level "ERROR"
         return $false
       }
     }
   }
   catch {
-    Write-Log "Failed to determine Java version: $_" -Level "ERROR"
+    Write-Log "Failed to verify Java version: $_" -Level "ERROR"
     return $false
   }
 
   return $true
 }
 
+
 function Start-MinecraftServerWithJar {
   param([string]$JarFile)
   try {
     if (-not (Validate-JavaExecutable)) { return }
-
-    Write-Log "Starting Minecraft server with Paper JAR file: $JarFile"
+    
     $javaArgs = @("-Xms$($config.MinRamGB)G", "-Xmx$($config.MaxRamGB)G", "-jar", $JarFile)
     if ($JavaAdditionalArgs) {
       $javaArgs += $JavaAdditionalArgs -split ' '
     }
-    Write-Log "Executing: $JavaExecutable $($javaArgs -join ' ')"
-    $process = Start-Process -FilePath $JavaExecutable -ArgumentList $javaArgs -WorkingDirectory $PSScriptRoot -PassThru
-    $process.WaitForExit()
+    
+    & $JavaExecutable @javaArgs
   }
   catch {
     Write-Log "Error starting Minecraft server: $_" -Level "ERROR"

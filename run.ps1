@@ -91,7 +91,11 @@ function Get-FileChecksum {
 
     try {
         $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
-        $checksum = $hashAlgorithm.ComputeHash([System.IO.File]::OpenRead($filePath))
+        try {
+            $checksum = $hashAlgorithm.ComputeHash([System.IO.File]::OpenRead($filePath))
+        } finally {
+            $fileStream.Dispose()
+        }
         return [BitConverter]::ToString($checksum) -replace '-'
     }
     catch {

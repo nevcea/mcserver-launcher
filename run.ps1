@@ -1,5 +1,3 @@
-#Requires -RunAsAdministrator
-
 $OutputEncoding = New-Object -TypeName System.Text.UTF8Encoding
 $VerbosePreference = "SilentlyContinue"
 

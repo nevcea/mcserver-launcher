@@ -1,3 +1,16 @@
+$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($IsAdmin) {
+    $messages = @(
+        "[Security Error] Running as Administrator is prohibited due to security restrictions."
+        "To learn why this is critical, please refer to the explanation here:"
+        "https://madelinemiller.dev/blog/root-minecraft-server/"
+    )
+    $messages | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    exit 1
+}
+
 $OutputEncoding = New-Object -TypeName System.Text.UTF8Encoding
 $VerbosePreference = "SilentlyContinue"
 

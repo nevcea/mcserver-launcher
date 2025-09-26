@@ -123,10 +123,13 @@ function Save-PaperJar {
     param([string]$Version)
     try {
         $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
-        $versionToDownload = if ($config.MinecraftVersion -eq 'latest') {
-            $versionData.versions[-1]
+        if ($config.MinecraftVersion -eq 'latest') {
+            $stableVersions = $versionData.versions | Where-Object {
+                $_ -match '^\d+\.\d+(\.\d+)?$'
+            }
+            $versionToDownload = $stableVersions[-1]
         } else {
-            $config.MinecraftVersion
+            $versionToDownload = $config.MinecraftVersion
         }
 
         $buildData = Get-VersionDataFromApi -Version $versionToDownload

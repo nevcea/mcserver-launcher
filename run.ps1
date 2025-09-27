@@ -106,7 +106,7 @@ function Get-FileChecksum {
         $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
         $fileStream = [System.IO.File]::OpenRead($filePath)
         try {
-            $checksum = $hashAlgorithm.ComputeHash([System.IO.File]::OpenRead($filePath))
+            $checksum = $hashAlgorithm.ComputeHash($fileStream)
         } finally {
             $fileStream.Dispose()
         }
@@ -118,7 +118,6 @@ function Get-FileChecksum {
         return $null
     }
 }
-
 function Save-PaperJar {
     param([string]$Version)
     try {

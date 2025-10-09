@@ -31,12 +31,16 @@ function Write-Log {
 try {
     $config = Import-PowerShellDataFile -Path "./config.psd1"
 
-    $TotalMemoryGB = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
-    $MinRamGB = 2
+    $TotalMemoryGB = [math]::Floor((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+    $MinRamGB = 2  
     $MaxRamGB = if ($TotalMemoryGB -le 4) { 2 }
                 elseif ($TotalMemoryGB -le 8) { 4 }
                 elseif ($TotalMemoryGB -le 16) { 8 }
-                else { [math]::Floor($TotalMemoryGB * 0.5) }
+                else { [math]::Min([math]::Floor($TotalMemoryGB * 0.5), 16) }  
+
+    if ($MaxRamGB -lt $MinRamGB) {
+        $MaxRamGB = $MinRamGB
+    }
 }
 catch {
     Write-Log "Failed to load configuration file: $_" -Level "ERROR"

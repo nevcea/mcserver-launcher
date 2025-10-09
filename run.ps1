@@ -308,12 +308,22 @@ function Start-MinecraftServerWithJar {
     try {
         if (-not (Test-JavaExecutable)) { return }
 
-        $javaArgs = @("-Xms$($MinRamGB)G", "-Xmx$($MaxRamGB)G", "-jar", $JarFile)
+        $javaArgs = @(
+            "-Xms$($MinRamGB)G",
+            "-Xmx$($MaxRamGB)G"
+        )
+
         if ($JavaAdditionalArgs) {
             $javaArgs += $JavaAdditionalArgs -split ' '
         }
 
-        & $JavaExecutable @javaArgs
+        $cmdArgs = @($javaArgs + "-jar", $JarFile)
+
+        if ($config.ServerArgs) {
+            $cmdArgs += $config.ServerArgs -split ' '
+        }
+
+        & $JavaExecutable @cmdArgs
     }
     catch {
         Write-Log "Error starting Minecraft server: $_" -Level "ERROR"

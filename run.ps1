@@ -118,8 +118,10 @@ function Get-FileChecksum {
         return $null
     }
 }
+
 function Save-PaperJar {
     param([string]$Version)
+    
     try {
         $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
         if ($config.MinecraftVersion -eq 'latest') {
@@ -138,6 +140,9 @@ function Save-PaperJar {
         $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
         $jarFileName = $downloadData.downloads.application.name
         $downloadUrl = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
+
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
 
         $jarFilePath = Join-Path -Path $PSScriptRoot -ChildPath $jarFileName
 
@@ -194,6 +199,53 @@ function Find-ExistingPaperJar {
         $global:LASTEXITCODE = 1
         return $null
     }
+}
+
+function Test-AndUpdatePaperJar {
+    param([string]$Version)
+
+    if ($Version -eq 'latest') {
+        $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
+        $stableVersions = $versionData.versions | Where-Object {
+            $_ -match '^\d+\.\d+(\.\d+)?$'
+        }
+        $Version = $stableVersions[-1]
+        Write-Host "Resolved 'latest' to version $Version" -ForegroundColor Cyan
+    }
+
+    $localJar = Find-ExistingPaperJar
+    $buildData = Get-VersionDataFromApi -Version $Version
+    if (-not $buildData) { return $null }
+
+    $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+
+    if ($localJar -and $localJar -match "paper-(\d+\.\d+(?:\.\d+)?)-(\d+)\.jar$") {
+        $localVersion = $matches[1]
+        $localBuild   = [int]$matches[2]
+
+        if ($localVersion -eq $Version) {
+            if ($localBuild -ge $latestBuild) {
+                Write-Host "Local Paper JAR is up to date (version $localVersion build $localBuild)" -ForegroundColor Green
+                return $localJar
+            }
+            else {
+                Write-Host "Updating Paper JAR: local build $localBuild < latest build $latestBuild" -ForegroundColor Yellow
+                $newJar = Save-PaperJar -Version $Version
+                if ($newJar -and (Test-Path $localJar)) {
+                    try {
+                        Remove-Item $localJar -Force
+                        Write-Host "Removed old JAR: $localJar" -ForegroundColor DarkGray
+                    } catch {
+                        Write-Log "Failed to remove old JAR '$localJar': $_" -Level "WARNING"
+                    }
+                }
+                return $newJar
+            }
+        }
+    }
+
+    Write-Host "No valid local Paper JAR found. Downloading latest..." -ForegroundColor Yellow
+    return Save-PaperJar -Version $Version
 }
 
 function Test-JavaExecutable {
@@ -272,10 +324,7 @@ function Start-MinecraftServer {
             Write-Log "Java validation failed. Exiting." -Level "ERROR"
             return
         }
-        $paperJar = Find-ExistingPaperJar
-        if (-not $paperJar) {
-            $paperJar = Save-PaperJar -Version $config.MinecraftVersion
-        }
+        $paperJar = Test-AndUpdatePaperJar -Version $config.MinecraftVersion
         if (-not $paperJar) {
             Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
             return

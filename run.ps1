@@ -11,9 +11,6 @@ if ($IsAdmin) {
     exit 1
 }
 
-$OutputEncoding = New-Object -TypeName System.Text.UTF8Encoding
-$VerbosePreference = "SilentlyContinue"
-
 function Write-Log {
     param(
         [Parameter(Mandatory)]
@@ -127,20 +124,13 @@ function Save-PaperJar {
     param([string]$Version)
     
     try {
-        $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
-        $versionToDownload = if ($Version -eq 'latest') {
-            ($versionData.versions | Where-Object { $_ -match '^\d+\.\d+(\.\d+)?$' })[-1]
-        } else {
-            $Version
-        }
-
-        $buildData = Get-VersionDataFromApi -Version $versionToDownload
+        $buildData = Get-VersionDataFromApi -Version $Version
         if (-not $buildData) { return $null }
 
         $latestBuild  = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
-        $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
+        $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$Version/builds/$latestBuild" -ErrorAction Stop
         $jarFileName  = $downloadData.downloads.application.name
-        $downloadUrl  = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
+        $downloadUrl  = "$ApiBaseUrl/versions/$Version/builds/$latestBuild/downloads/$jarFileName"
 
         $jarFilePath = Join-Path -Path $PSScriptRoot -ChildPath $jarFileName
 
@@ -185,7 +175,7 @@ function Find-ExistingPaperJar {
                         Build    = [int]$matches[2]
                     }
                 }
-            }
+            } | Where-Object { $_ -ne $null }
 
             $latestJar = $paperJars | Sort-Object Version, Build -Descending | Select-Object -First 1
 
@@ -205,17 +195,18 @@ function Find-ExistingPaperJar {
 function Test-AndUpdatePaperJar {
     param([string]$Version)
 
+    $resolvedVersion = $Version
     if ($Version -eq 'latest') {
         $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
         $stableVersions = $versionData.versions | Where-Object {
             $_ -match '^\d+\.\d+(\.\d+)?$'
         }
-        $Version = $stableVersions[-1]
-        Write-Host "Resolved 'latest' to version $Version" -ForegroundColor Cyan
+        $resolvedVersion = $stableVersions[-1]
+        Write-Host "Resolved 'latest' to version $resolvedVersion" -ForegroundColor Cyan
     }
 
     $localJar = Find-ExistingPaperJar
-    $buildData = Get-VersionDataFromApi -Version $Version
+    $buildData = Get-VersionDataFromApi -Version $resolvedVersion
     if (-not $buildData) { return $null }
 
     $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
@@ -224,17 +215,16 @@ function Test-AndUpdatePaperJar {
         $localVersion = $matches[1]
         $localBuild   = [int]$matches[2]
 
-        if ($localVersion -eq $Version) {
+        if ($localVersion -eq $resolvedVersion) {
             if ($localBuild -ge $latestBuild) {
                 Write-Host "Local Paper JAR is up to date (version $localVersion build $localBuild)" -ForegroundColor Green
                 return $localJar
             }
             else {
                 Write-Host "Updating Paper JAR: local build $localBuild < latest build $latestBuild" -ForegroundColor Yellow
-                $newJar = Save-PaperJar -Version $Version
+                $newJar = Save-PaperJar -Version $resolvedVersion
                 if ($newJar -and $localJar) {
                     try {
-                        # --- B. 절대경로로 구 JAR 삭제 ---
                         $oldJarPath = Join-Path -Path $PSScriptRoot -ChildPath $localJar
                         if (Test-Path $oldJarPath) {
                             Remove-Item $oldJarPath -Force
@@ -250,7 +240,7 @@ function Test-AndUpdatePaperJar {
     }
 
     Write-Host "No valid local Paper JAR found. Downloading latest..." -ForegroundColor Yellow
-    return Save-PaperJar -Version $Version
+    return Save-PaperJar -Version $resolvedVersion
 }
 
 function Test-JavaExecutable {
@@ -307,7 +297,7 @@ function Test-JavaExecutable {
 function Start-MinecraftServerWithJar {
     param([string]$JarFile)
     try {
-        if (-not (Test-JavaExecutable)) { return }
+        $jarPath = if ([System.IO.Path]::IsPathRooted($JarFile)) { $JarFile } else { Join-Path $PSScriptRoot $JarFile }
 
         $javaArgs = @(
             "-Xms$($MinRamGB)G",
@@ -315,13 +305,13 @@ function Start-MinecraftServerWithJar {
         )
 
         if ($JavaAdditionalArgs) {
-            $javaArgs += $JavaAdditionalArgs -split ' '
+            $javaArgs += @(if ($JavaAdditionalArgs -is [array]) { $JavaAdditionalArgs } else { $JavaAdditionalArgs -split ' ' })
         }
 
-        $cmdArgs = @($javaArgs + "-jar", $JarFile)
+        $cmdArgs = @($javaArgs + "-jar", $jarPath)
 
         if ($config.ServerArgs) {
-            $cmdArgs += $config.ServerArgs -split ' '
+            $cmdArgs += @(if ($config.ServerArgs -is [array]) { $config.ServerArgs } else { $config.ServerArgs -split ' ' })
         }
 
         & $JavaExecutable @cmdArgs
@@ -344,7 +334,6 @@ function Start-MinecraftServer {
             Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
             return
         }
-        Clear-Host
         Start-MinecraftServerWithJar -JarFile $paperJar
     }
     catch {

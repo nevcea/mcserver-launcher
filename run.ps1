@@ -4,7 +4,7 @@ $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if ($IsAdmin) {
     $messages = @(
         "[Security Error] Running as Administrator is prohibited due to security restrictions."
-        "To learn why this is critical, please refer to the explanation here:"
+        "To learn why this is critical, please refer to:"
         "https://madelinemiller.dev/blog/root-minecraft-server/"
     )
     $messages | ForEach-Object { Write-Host $_ -ForegroundColor Red }
@@ -25,8 +25,40 @@ function Write-Log {
     $logMethods[$Level].Invoke()
 }
 
+$DefaultJavaArgs = @(
+    "-XX:+UseG1GC",
+    "-XX:+ParallelRefProcEnabled",
+    "-XX:MaxGCPauseMillis=200",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:+DisableExplicitGC",
+    "-XX:+AlwaysPreTouch",
+    "-XX:G1NewSizePercent=30",
+    "-XX:G1MaxNewSizePercent=40",
+    "-XX:G1HeapRegionSize=8M",
+    "-XX:G1ReservePercent=20",
+    "-XX:G1HeapWastePercent=5",
+    "-XX:G1MixedGCCountTarget=4",
+    "-XX:InitiatingHeapOccupancyPercent=15",
+    "-XX:G1MixedGCLiveThresholdPercent=90",
+    "-XX:G1RSetUpdatingPauseTimePercent=5",
+    "-XX:SurvivorRatio=32",
+    "-XX:+PerfDisableSharedMem",
+    "-XX:MaxTenuringThreshold=1",
+    "-Dusing.aikars.flags=https://mcflags.emc.gs",
+    "-Daikars.new.flags=true",
+    "-Dfile.encoding=UTF-8"
+)
+
 try {
     $config = Import-PowerShellDataFile -Path "./config.psd1"
+
+    if (-not $config.JavaExecutable)     { $config.JavaExecutable = "java" }
+    if (-not $config.JarFilePattern)     { $config.JarFilePattern = "paper-*.jar" }
+    if (-not $config.JavaAdditionalArgs) { $config.JavaAdditionalArgs = $DefaultJavaArgs }
+    elseif (-is [string] $config.JavaAdditionalArgs) {
+        $config.JavaAdditionalArgs = $config.JavaAdditionalArgs -split ' '
+    }
+    if (-not $config.ServerArgs)         { $config.ServerArgs = "nogui" }
 
     $TotalMemoryGB = [math]::Floor((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
     $MinRamGB = 2  
@@ -35,32 +67,26 @@ try {
                 elseif ($TotalMemoryGB -le 16) { 8 }
                 else { [math]::Min([math]::Floor($TotalMemoryGB * 0.5), 16) }  
 
-    if ($MaxRamGB -lt $MinRamGB) {
-        $MaxRamGB = $MinRamGB
-    }
+    if ($MaxRamGB -lt $MinRamGB) { $MaxRamGB = $MinRamGB }
 }
 catch {
-    Write-Log "Failed to load configuration file: $_" -Level "ERROR"
+    Write-Log "Failed to load configuration file. Ensure config.psd1 exists. Details: $_" -Level "ERROR"
     exit 1
 }
 
 $ApiBaseUrl = "https://api.papermc.io/v2/projects/paper"
 $JavaExecutable = $config.JavaExecutable
 $JarFilePattern = $config.JarFilePattern
-$JavaAdditionalArgs = $config.JavaAdditionalArgs
 
 $script:paperApiCache = @{}
 
 function New-Directory {
     param([string]$Path)
     if (-not (Test-Path $Path)) {
-        try {
-            New-Item -ItemType Directory -Path $Path -Force | Out-Null
-        }
+        try { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
         catch {
-            Write-Log "Error creating directory ${Path}: $_" -Level "ERROR"
+            Write-Log "Error creating directory '${Path}'. Check permissions. Details: $_" -Level "ERROR"
             $global:LASTEXITCODE = 1
-            return
         }
     }
 }
@@ -71,29 +97,25 @@ function Initialize-ServerDirectories {
         Set-Content -Path "./eula.txt" -Value "eula=true" -Encoding ASCII
     }
     catch { 
-        Write-Log "Error initializing server directories: $_" -Level "ERROR"
+        Write-Log "Failed to initialize server directories. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
-        return
     }
 }
 
 function Get-VersionDataFromApi {
     param([string]$Version)
     $cacheKey = "versionData-$Version"
-
     if (-not $script:paperApiCache.ContainsKey($cacheKey)) {
         try {
             $response = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$Version" -ErrorAction Stop
-            if ($response) {
-                $script:paperApiCache[$cacheKey] = $response
-            }
+            if ($response) { $script:paperApiCache[$cacheKey] = $response }
             else {
-                Write-Log "No data received from API for version '$Version'" -Level "ERROR"
+                Write-Log "Empty response from API for version '$Version'. Check network or API status." -Level "ERROR"
                 return $null
             }
         }
         catch {
-            Write-Log "Failed to fetch API data for version '$Version': $_" -Level "ERROR"
+            Write-Log "Failed to fetch API data for version '$Version'. Network or API error. Details: $_" -Level "ERROR"
             return $null
         }
     }
@@ -102,19 +124,15 @@ function Get-VersionDataFromApi {
 
 function Get-FileChecksum {
     param([string]$filePath)
-
     try {
         $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
         $fileStream = [System.IO.File]::OpenRead($filePath)
-        try {
-            $checksum = $hashAlgorithm.ComputeHash($fileStream)
-        } finally {
-            $fileStream.Dispose()
-        }
+        try { $checksum = $hashAlgorithm.ComputeHash($fileStream) }
+        finally { $fileStream.Dispose() }
         return [BitConverter]::ToString($checksum) -replace '-'
     }
     catch {
-        Write-Log "Failed to calculate checksum for file '$filePath': $_" -Level "ERROR"
+        Write-Log "Failed to calculate checksum for '$filePath'. File might be locked or missing. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
         return $null
     }
@@ -122,7 +140,6 @@ function Get-FileChecksum {
 
 function Save-PaperJar {
     param([string]$Version)
-    
     try {
         $buildData = Get-VersionDataFromApi -Version $Version
         if (-not $buildData) { return $null }
@@ -147,17 +164,16 @@ function Save-PaperJar {
             $actual   = ($actual -replace '-', '').ToUpperInvariant()
 
             if ($actual -ne $expected) {
-                Write-Log "Checksum validation failed. expected=$expected actual=$actual" -Level "ERROR"
+                Write-Log "Checksum mismatch. Expected=$expected, Actual=$actual. File will be removed." -Level "ERROR"
                 Remove-Item $jarFilePath -Force
                 $global:LASTEXITCODE = 1
                 return $null
             }
         }
-
         return $jarFileName
     }
     catch {
-        Write-Log "Paper JAR download failed: $_" -Level "ERROR"
+        Write-Log "Failed to download Paper JAR. Check internet connection or API status. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
         return $null
     }
@@ -177,16 +193,12 @@ function Find-ExistingPaperJar {
                 }
             } | Where-Object { $_ -ne $null }
 
-            $latestJar = $paperJars | Sort-Object Version, Build -Descending | Select-Object -First 1
-
-            if ($latestJar) {
-                return $latestJar.FileName
-            }
+            return ($paperJars | Sort-Object Version, Build -Descending | Select-Object -First 1).FileName
         }
         return $null
     }
     catch {
-        Write-Log "Error searching for Paper JAR file: $_" -Level "ERROR"
+        Write-Log "Error while searching for Paper JAR. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
         return $null
     }
@@ -198,9 +210,7 @@ function Test-AndUpdatePaperJar {
     $resolvedVersion = $Version
     if ($Version -eq 'latest') {
         $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
-        $stableVersions = $versionData.versions | Where-Object {
-            $_ -match '^\d+\.\d+(\.\d+)?$'
-        }
+        $stableVersions = $versionData.versions | Where-Object { $_ -match '^\d+\.\d+(\.\d+)?$' }
         $resolvedVersion = $stableVersions[-1]
         Write-Host "Resolved 'latest' to version $resolvedVersion" -ForegroundColor Cyan
     }
@@ -217,11 +227,11 @@ function Test-AndUpdatePaperJar {
 
         if ($localVersion -eq $resolvedVersion) {
             if ($localBuild -ge $latestBuild) {
-                Write-Host "Local Paper JAR is up to date (version $localVersion build $localBuild)" -ForegroundColor Green
+                Write-Host "Local Paper JAR is up to date ($localVersion build $localBuild)" -ForegroundColor Green
                 return $localJar
             }
             else {
-                Write-Host "Updating Paper JAR: local build $localBuild < latest build $latestBuild" -ForegroundColor Yellow
+                Write-Host "Updating Paper JAR (local build $localBuild < latest build $latestBuild)" -ForegroundColor Yellow
                 $newJar = Save-PaperJar -Version $resolvedVersion
                 if ($newJar -and $localJar) {
                     try {
@@ -231,7 +241,7 @@ function Test-AndUpdatePaperJar {
                             Write-Host "Removed old JAR: $oldJarPath" -ForegroundColor DarkGray
                         }
                     } catch {
-                        Write-Log "Failed to remove old JAR '$localJar': $_" -Level "WARNING"
+                        Write-Log "Could not remove old JAR '$localJar'. Details: $_" -Level "WARNING"
                     }
                 }
                 return $newJar
@@ -244,53 +254,41 @@ function Test-AndUpdatePaperJar {
 }
 
 function Test-JavaExecutable {
-    param()
-
     if ([string]::IsNullOrEmpty($JavaExecutable)) {
-        Write-Log "JavaExecutable path is not defined in config.psd1." -Level "ERROR"
-        $global:LASTEXITCODE = 1
+        Write-Log "JavaExecutable path not set in config.psd1." -Level "ERROR"
         return $false
     }
 
     $javaCmd = Get-Command $JavaExecutable -ErrorAction SilentlyContinue
     if (-not $javaCmd) {
-        Write-Log "Java executable not found at path: '$JavaExecutable'. Please check your config.psd1." -Level "ERROR"
-        $global:LASTEXITCODE = 1
+        Write-Log "Java not found at path '$JavaExecutable'. Please verify config.psd1." -Level "ERROR"
         return $false
     }
 
     try {
         $javaVersionOutput = & $JavaExecutable -version 2>&1 | Out-String
-
         if ([string]::IsNullOrWhiteSpace($javaVersionOutput)) {
-            Write-Log "No output received from Java executable version check. Command: '$JavaExecutable -version'" -Level "ERROR"
+            Write-Log "Java executable gave no output. Command: '$JavaExecutable -version'" -Level "ERROR"
             return $false
         }
 
-        if ($javaVersionOutput -match 'version "(\d+)(?:\.\d+)?(?:\.\d+)?(?:_(\d+))?"') {
-            if ($matches.Count -gt 1) {
-                $majorVersion = [int]$matches[1]
-                Write-Host "Detected Java version: $majorVersion" -ForegroundColor Green
-
-                if ($majorVersion -lt 17) {
-                    Write-Log "Java 17 or higher is required to run Minecraft Paper server. Detected version: $majorVersion" -Level "ERROR"
-                    return $false
-                }
-            } else {
-                Write-Log "Failed to parse Java version from output: '$javaVersionOutput'. Regex did not find expected groups." -Level "ERROR"
+        if ($javaVersionOutput -match 'version "(\d+)(?:\.\d+)?') {
+            $majorVersion = [int]$matches[1]
+            Write-Host "Detected Java version: $majorVersion" -ForegroundColor Green
+            if ($majorVersion -lt 17) {
+                Write-Log "Java 17+ is required. Detected version: $majorVersion" -Level "ERROR"
                 return $false
             }
         }
         else {
-            Write-Log "Failed to parse Java version output: '$javaVersionOutput'. Output format unexpected." -Level "ERROR"
+            Write-Log "Could not parse Java version. Output: '$javaVersionOutput'" -Level "ERROR"
             return $false
         }
     }
     catch {
-        Write-Log "An error occurred while verifying Java version: $_" -Level "ERROR"
+        Write-Log "Java check failed. Details: $_" -Level "ERROR"
         return $false
     }
-
     return $true
 }
 
@@ -299,25 +297,14 @@ function Start-MinecraftServerWithJar {
     try {
         $jarPath = if ([System.IO.Path]::IsPathRooted($JarFile)) { $JarFile } else { Join-Path $PSScriptRoot $JarFile }
 
-        $javaArgs = @(
-            "-Xms$($MinRamGB)G",
-            "-Xmx$($MaxRamGB)G"
-        )
-
-        if ($JavaAdditionalArgs) {
-            $javaArgs += @(if ($JavaAdditionalArgs -is [array]) { $JavaAdditionalArgs } else { $JavaAdditionalArgs -split ' ' })
-        }
-
-        $cmdArgs = @($javaArgs + "-jar", $jarPath)
-
-        if ($config.ServerArgs) {
-            $cmdArgs += @(if ($config.ServerArgs -is [array]) { $config.ServerArgs } else { $config.ServerArgs -split ' ' })
-        }
+        $javaArgs = @("-Xms$($MinRamGB)G", "-Xmx$($MaxRamGB)G") + $config.JavaAdditionalArgs
+        $cmdArgs  = @($javaArgs + "-jar", $jarPath)
+        if ($config.ServerArgs) { $cmdArgs += $config.ServerArgs -split ' ' }
 
         & $JavaExecutable @cmdArgs
     }
     catch {
-        Write-Log "Error starting Minecraft server: $_" -Level "ERROR"
+        Write-Log "Failed to start Minecraft server. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
     }
 }
@@ -326,18 +313,18 @@ function Start-MinecraftServer {
     try {
         Initialize-ServerDirectories
         if (-not (Test-JavaExecutable)) {
-            Write-Log "Java validation failed. Exiting." -Level "ERROR"
+            Write-Log "Java validation failed. Server will not start." -Level "ERROR"
             return
         }
         $paperJar = Test-AndUpdatePaperJar -Version $config.MinecraftVersion
         if (-not $paperJar) {
-            Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
+            Write-Log "No valid Paper JAR found. Exiting." -Level "ERROR"
             return
         }
         Start-MinecraftServerWithJar -JarFile $paperJar
     }
     catch {
-        Write-Log "Unexpected error occurred: $_" -Level "ERROR"
+        Write-Log "Unexpected fatal error. Details: $_" -Level "ERROR"
         $global:LASTEXITCODE = 1
     }
 }

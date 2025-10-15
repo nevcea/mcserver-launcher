@@ -128,39 +128,36 @@ function Save-PaperJar {
     
     try {
         $versionData = Invoke-RestMethod -Uri $ApiBaseUrl -ErrorAction Stop
-        if ($config.MinecraftVersion -eq 'latest') {
-            $stableVersions = $versionData.versions | Where-Object {
-                $_ -match '^\d+\.\d+(\.\d+)?$'
-            }
-            $versionToDownload = $stableVersions[-1]
+        $versionToDownload = if ($Version -eq 'latest') {
+            ($versionData.versions | Where-Object { $_ -match '^\d+\.\d+(\.\d+)?$' })[-1]
         } else {
-            $versionToDownload = $config.MinecraftVersion
+            $Version
         }
 
         $buildData = Get-VersionDataFromApi -Version $versionToDownload
         if (-not $buildData) { return $null }
 
-        $latestBuild = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+        $latestBuild  = ($buildData.builds | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
         $downloadData = Invoke-RestMethod -Uri "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild" -ErrorAction Stop
-        $jarFileName = $downloadData.downloads.application.name
-        $downloadUrl = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
-
-        $ProgressPreference = "SilentlyContinue"
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
+        $jarFileName  = $downloadData.downloads.application.name
+        $downloadUrl  = "$ApiBaseUrl/versions/$versionToDownload/builds/$latestBuild/downloads/$jarFileName"
 
         $jarFilePath = Join-Path -Path $PSScriptRoot -ChildPath $jarFileName
 
-        if (Test-Path $jarFilePath) {
-            return $jarFileName
+        if (-not (Test-Path $jarFilePath)) {
+            $ProgressPreference = "SilentlyContinue"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
         }
-
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $jarFilePath -ErrorAction Stop
 
         $expectedChecksum = $downloadData.downloads.application.sha256
         if ($expectedChecksum) {
-            $actualChecksum = Get-FileChecksum -filePath $jarFilePath
-            if ($actualChecksum -ne $expectedChecksum) {
-                Write-Log "Checksum validation failed." -Level "ERROR"
+            $expected = ($expectedChecksum -replace '-', '').ToUpperInvariant()
+            $actual   = Get-FileChecksum -filePath $jarFilePath
+            if (-not $actual) { return $null }
+            $actual   = ($actual -replace '-', '').ToUpperInvariant()
+
+            if ($actual -ne $expected) {
+                Write-Log "Checksum validation failed. expected=$expected actual=$actual" -Level "ERROR"
                 Remove-Item $jarFilePath -Force
                 $global:LASTEXITCODE = 1
                 return $null
@@ -235,10 +232,14 @@ function Test-AndUpdatePaperJar {
             else {
                 Write-Host "Updating Paper JAR: local build $localBuild < latest build $latestBuild" -ForegroundColor Yellow
                 $newJar = Save-PaperJar -Version $Version
-                if ($newJar -and (Test-Path $localJar)) {
+                if ($newJar -and $localJar) {
                     try {
-                        Remove-Item $localJar -Force
-                        Write-Host "Removed old JAR: $localJar" -ForegroundColor DarkGray
+                        # --- B. 절대경로로 구 JAR 삭제 ---
+                        $oldJarPath = Join-Path -Path $PSScriptRoot -ChildPath $localJar
+                        if (Test-Path $oldJarPath) {
+                            Remove-Item $oldJarPath -Force
+                            Write-Host "Removed old JAR: $oldJarPath" -ForegroundColor DarkGray
+                        }
                     } catch {
                         Write-Log "Failed to remove old JAR '$localJar': $_" -Level "WARNING"
                     }
@@ -343,7 +344,6 @@ function Start-MinecraftServer {
             Write-Log "Paper JAR file not found. Exiting." -Level "ERROR"
             return
         }
-        Test-JavaExecutable
         Clear-Host
         Start-MinecraftServerWithJar -JarFile $paperJar
     }

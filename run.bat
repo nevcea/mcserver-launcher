@@ -3,9 +3,13 @@ chcp 949 >nul 2>&1
 setlocal enabledelayedexpansion
 
 set "MINECRAFT_VERSION=latest"
-set "MIN_RAM=1"
-set "MAX_RAM=2"
+set "MIN_RAM=2"
+set "MAX_RAM=4"
 set "SERVER_ARGS=nogui"
+
+set "RAM_LOW_THRESHOLD=4"
+set "RAM_MID_THRESHOLD=8"
+set "RAM_HIGH_THRESHOLD=16"
 
 set "JAVA_CMD=java"
 where java >nul 2>&1
@@ -22,18 +26,20 @@ for /f "tokens=2 delims==" %%m in ('wmic computersystem get TotalPhysicalMemory 
     set /a "TOTAL_RAM_GB=%%m/1024/1024/1024" 2>nul
 )
 
-if "!ORIGINAL_MAX_RAM!"=="2" (
+if "!ORIGINAL_MAX_RAM!"=="!MAX_RAM!" (
     if "!TOTAL_RAM_GB!"=="" (
-        set "MAX_RAM=2"
-    ) else if !TOTAL_RAM_GB! leq 4 (
-        set "MAX_RAM=2"
-    ) else if !TOTAL_RAM_GB! leq 8 (
-        set "MAX_RAM=4"
-    ) else if !TOTAL_RAM_GB! leq 16 (
+        set /a "MAX_RAM=!MAX_RAM!/2"
+        if !MAX_RAM! lss !MIN_RAM! set "MAX_RAM=!MIN_RAM!"
+    ) else if !TOTAL_RAM_GB! leq !RAM_LOW_THRESHOLD! (
+        set /a "MAX_RAM=!TOTAL_RAM_GB!/2"
+        if !MAX_RAM! lss !MIN_RAM! set "MAX_RAM=!MIN_RAM!"
+    ) else if !TOTAL_RAM_GB! leq !RAM_MID_THRESHOLD! (
+        set /a "MAX_RAM=!TOTAL_RAM_GB!/2"
+    ) else if !TOTAL_RAM_GB! leq !RAM_HIGH_THRESHOLD! (
         set "MAX_RAM=8"
     ) else (
         set /a "MAX_RAM=!TOTAL_RAM_GB!/2"
-        if !MAX_RAM! gtr 16 set "MAX_RAM=16"
+        if !MAX_RAM! gtr !RAM_HIGH_THRESHOLD! set "MAX_RAM=!RAM_HIGH_THRESHOLD!"
     )
 )
 

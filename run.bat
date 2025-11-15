@@ -13,7 +13,7 @@ set "RAM_HIGH_THRESHOLD=16"
 
 set "JAVA_CMD=java"
 where java >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [ERROR] Java not found. Please install Java.
     pause
     exit /b 1
@@ -54,6 +54,7 @@ for %%f in (paper-*.jar) do (
 :jar_found
 if defined JAR_FILE goto :jar_exists
 
+echo.
 echo No Paper JAR file found.
 echo Would you like to download automatically? [Y/N]:
 set "DOWNLOAD_CHOICE="
@@ -92,14 +93,33 @@ exit /b 1
 
 :jar_exists
 
-if not exist "eula.txt" (
-    echo eula=true > "eula.txt"
+if not defined JAR_FILE (
+    echo [ERROR] JAR file is not defined.
+    goto :exit_error
+)
+
+if not exist "!JAR_FILE!" (
+    echo [ERROR] JAR file not found: !JAR_FILE!
+    goto :exit_error
+)
+
+set "EULA_VALID=0"
+if exist "eula.txt" (
+    findstr /v /c:"#" "eula.txt" 2>nul | findstr /i /c:"eula=true" >nul 2>&1
+    if !errorlevel! equ 0 set "EULA_VALID=1"
+)
+
+if !EULA_VALID! equ 0 (
+    powershell -NoProfile -Command "$content = '#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).' + [Environment]::NewLine + 'eula=true'; [System.IO.File]::WriteAllText('eula.txt', $content, [System.Text.Encoding]::UTF8)" 2>nul
+    if errorlevel 1 (
+        (
+            echo #By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA^).
+            echo eula=true
+        ) > "eula.txt"
+    )
 )
 
 set "JAVA_ARGS=-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true -Dfile.encoding=UTF-8"
-
-echo Starting server...
-echo.
 
 %JAVA_CMD% -Xms!MIN_RAM!G -Xmx!MAX_RAM!G %JAVA_ARGS% -jar "!JAR_FILE!" %SERVER_ARGS%
 set SERVER_EXIT_CODE=!errorlevel!
